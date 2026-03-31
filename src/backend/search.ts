@@ -7,6 +7,7 @@ export interface SearchCriteria {
   keywords: string[];
   excludeKeywords: string[];
   groupUrls?: string[];
+  aiPrompt?: string;
   category?: string;
   location?: string;
   radius?: number;

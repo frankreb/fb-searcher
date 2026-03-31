@@ -59,19 +59,51 @@ export async function processScrapedItems(items: RawScrapedItem[], config: AppCo
     }
   }
 
-  // AI filtering step: send all matched items as a batch to Claude for review
+  // Group matched items by search, so each search can use its own AI prompt
   if (pendingNotifications.length > 0) {
-    if (config.aiFilter.enabled) {
-      logger.info(`Running AI filter on ${pendingNotifications.length} matched items`);
-      const approved = await filterWithAi(pendingNotifications, config.aiFilter);
+    // Build a map of searchId → { prompt, items }
+    const searchRows = getActiveSearches();
+    const searchMap = new Map<string, { name: string; aiPrompt?: string }>();
+    for (const row of searchRows) {
+      const criteria = JSON.parse(row.criteria_json) as SearchCriteria;
+      searchMap.set(row.id, { name: row.name, aiPrompt: criteria.aiPrompt });
+    }
 
-      for (const entry of approved) {
-        await queueAiNotifications(entry.item, entry.matches, entry.aiSummary, config.telegram.chatId);
+    // Group items by their matched search
+    const bySearch = new Map<string, Array<{ item: ScrapedItemRow; matches: MatchResult[] }>>();
+    for (const entry of pendingNotifications) {
+      for (const match of entry.matches) {
+        if (!bySearch.has(match.searchId)) bySearch.set(match.searchId, []);
+        bySearch.get(match.searchId)!.push({ item: entry.item, matches: [match] });
       }
-    } else {
-      // No AI filter — send all matches directly
-      for (const entry of pendingNotifications) {
-        await queueNotifications(entry.item, entry.matches, config.telegram.chatId);
+    }
+
+    // Process each search group
+    for (const [searchId, entries] of bySearch) {
+      const searchInfo = searchMap.get(searchId);
+      const searchPrompt = searchInfo?.aiPrompt;
+
+      if (searchPrompt && config.aiFilter.enabled) {
+        // This search has its own AI prompt — run Codex with it
+        logger.info(`Running Codex for search "${searchInfo?.name}" on ${entries.length} items`);
+        const approved = await filterWithAi(entries, { enabled: true, prompt: searchPrompt });
+
+        for (const entry of approved) {
+          await queueAiNotifications(entry.item, entry.matches, entry.aiSummary, config.telegram.chatId);
+        }
+      } else if (!searchPrompt && config.aiFilter.enabled && config.aiFilter.prompt) {
+        // No per-search prompt but global AI filter is on — use global prompt
+        logger.info(`Running Codex (global prompt) for search "${searchInfo?.name}" on ${entries.length} items`);
+        const approved = await filterWithAi(entries, config.aiFilter);
+
+        for (const entry of approved) {
+          await queueAiNotifications(entry.item, entry.matches, entry.aiSummary, config.telegram.chatId);
+        }
+      } else {
+        // No AI filter — send directly
+        for (const entry of entries) {
+          await queueNotifications(entry.item, entry.matches, config.telegram.chatId);
+        }
       }
     }
   }
