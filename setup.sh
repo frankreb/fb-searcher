@@ -32,13 +32,22 @@ sudo apt-get update -y
 sudo apt-get upgrade -y
 
 info "Installing system dependencies..."
+
+# Chromium package name varies by distro
+CHROMIUM_PKG=""
+if apt-cache show chromium &>/dev/null; then
+  CHROMIUM_PKG="chromium"
+elif apt-cache show chromium-browser &>/dev/null; then
+  CHROMIUM_PKG="chromium-browser"
+else
+  warn "Neither 'chromium' nor 'chromium-browser' found in apt. Will try snap fallback."
+fi
+
 sudo apt-get install -y \
   curl \
   git \
   build-essential \
   python3 \
-  chromium-browser \
-  chromium-codecs-ffmpeg \
   fonts-liberation \
   libatk-bridge2.0-0 \
   libatk1.0-0 \
@@ -54,7 +63,27 @@ sudo apt-get install -y \
   xdg-utils \
   libpango-1.0-0 \
   libcairo2 \
-  libasound2
+  libasound2t64 || sudo apt-get install -y libasound2
+
+# Install Chromium
+if [ -n "$CHROMIUM_PKG" ]; then
+  sudo apt-get install -y "$CHROMIUM_PKG"
+else
+  info "Installing Chromium via snap..."
+  sudo snap install chromium
+fi
+
+# Determine Chromium binary path
+if command -v chromium &>/dev/null; then
+  CHROMIUM_BIN=$(which chromium)
+elif command -v chromium-browser &>/dev/null; then
+  CHROMIUM_BIN=$(which chromium-browser)
+elif [ -f /snap/bin/chromium ]; then
+  CHROMIUM_BIN="/snap/bin/chromium"
+else
+  error "Could not find Chromium binary after installation. Install it manually."
+fi
+info "Chromium found at: $CHROMIUM_BIN"
 
 # -----------------------------------------------------------
 # 2. Node.js (via nvm)
@@ -133,7 +162,7 @@ if [ ! -f "$APP_DIR/.env" ]; then
   # Set Chromium path for Raspberry Pi
   echo "" >> "$APP_DIR/.env"
   echo "# Raspberry Pi Chromium path" >> "$APP_DIR/.env"
-  echo "PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser" >> "$APP_DIR/.env"
+  echo "PUPPETEER_EXECUTABLE_PATH=${CHROMIUM_BIN}" >> "$APP_DIR/.env"
 
   warn "Please edit .env with your Telegram bot token, chat ID, and other settings:"
   warn "  nano $APP_DIR/.env"
@@ -155,7 +184,7 @@ const { join } = require('path');
  */
 module.exports = {
   skipChromiumDownload: true,
-  executablePath: '/usr/bin/chromium-browser',
+  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
   cacheDirectory: join(__dirname, '.cache', 'puppeteer'),
 };
 PCONF
@@ -183,7 +212,7 @@ User=$(whoami)
 WorkingDirectory=${APP_DIR}
 Environment=NODE_ENV=production
 Environment=PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-Environment=PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+Environment=PUPPETEER_EXECUTABLE_PATH=${CHROMIUM_BIN}
 Environment=PATH=${NVM_DIR_RESOLVED}/versions/node/v${NODE_VERSION}.*/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=${APP_DIR}/.env
 ExecStart=${NODE_PATH} ${APP_DIR}/dist/index.js
