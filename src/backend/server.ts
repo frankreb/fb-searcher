@@ -134,8 +134,9 @@ Output ONLY the prompt text, nothing else. No markdown, no quotes, no explanatio
       const tmpFile = path.join(os.tmpdir(), `codex-prompt-${Date.now()}.txt`);
 
       console.log('[generate-prompt] Running Codex CLI...');
+      console.log('[generate-prompt] Output file:', tmpFile);
 
-      await new Promise<void>((resolve, reject) => {
+      const { stdout: codexStdout, stderr: codexStderr } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
         execFile('codex', [
           'exec',
           '--full-auto',
@@ -146,31 +147,50 @@ Output ONLY the prompt text, nothing else. No markdown, no quotes, no explanatio
           { timeout: 90000, maxBuffer: 1024 * 1024 * 5 },
           (error, stdout, stderr) => {
             if (error) {
-              console.error('[generate-prompt] Codex error:', error.message);
-              console.error('[generate-prompt] stderr:', stderr);
-              reject(new Error(`Codex failed: ${error.message}\n${stderr}`));
+              console.error('[generate-prompt] Codex exit error:', error.message);
+              console.error('[generate-prompt] stdout:', stdout?.substring(0, 500));
+              console.error('[generate-prompt] stderr:', stderr?.substring(0, 500));
+              reject(new Error(`Codex failed: ${error.message}`));
             } else {
-              console.log('[generate-prompt] Codex completed successfully');
-              resolve();
+              resolve({ stdout, stderr });
             }
           }
         );
       });
 
-      // Read the output file
+      console.log('[generate-prompt] Codex stdout length:', codexStdout?.length);
+      console.log('[generate-prompt] Codex stderr length:', codexStderr?.length);
+
+      // Try reading from -o output file first
       let output = '';
       try {
-        output = fs.readFileSync(tmpFile, 'utf-8').trim();
-        fs.unlinkSync(tmpFile);
-      } catch {
-        console.error('[generate-prompt] Could not read Codex output file:', tmpFile);
+        if (fs.existsSync(tmpFile)) {
+          output = fs.readFileSync(tmpFile, 'utf-8').trim();
+          fs.unlinkSync(tmpFile);
+          console.log('[generate-prompt] Read from -o file, length:', output.length);
+        } else {
+          console.log('[generate-prompt] Output file does not exist');
+        }
+      } catch (readErr) {
+        console.error('[generate-prompt] Error reading output file:', readErr);
+      }
+
+      // If -o file was empty, try parsing stdout
+      if (!output && codexStdout) {
+        console.log('[generate-prompt] Falling back to stdout');
+        console.log('[generate-prompt] stdout preview:', codexStdout.substring(0, 300));
+        // Strip ANSI escape codes and control characters
+        output = codexStdout
+          .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+          .replace(/[\x00-\x09\x0b-\x1f]/g, '')
+          .trim();
       }
 
       if (!output) {
-        throw new Error('Codex produced empty output');
+        throw new Error('Codex produced empty output (both -o file and stdout empty)');
       }
 
-      console.log('[generate-prompt] Generated prompt:', output.substring(0, 100) + '...');
+      console.log('[generate-prompt] Final prompt preview:', output.substring(0, 200));
       res.json({ prompt: output });
     } catch (err) {
       // Fallback: generate a basic prompt without Codex

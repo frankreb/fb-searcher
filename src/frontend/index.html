@@ -426,12 +426,18 @@
           body: JSON.stringify(body),
         });
 
-        document.getElementById('search-ai-prompt').value = result.prompt;
+        console.log('Generate prompt result:', JSON.stringify(result));
 
-        if (result.fallback) {
-          showToast('Codex unavailable — basic prompt generated. Edit it or try again.', 'error');
+        if (result.prompt) {
+          document.getElementById('search-ai-prompt').value = result.prompt;
+          if (result.fallback) {
+            showToast('Codex unavailable — basic prompt generated. Edit it or try again.', 'error');
+          } else {
+            showToast('Codex generated your prompt! Review and edit if needed.', 'success');
+          }
         } else {
-          showToast('Codex generated your prompt! Review and edit if needed.', 'success');
+          showToast('Codex returned empty response. Write your prompt manually.', 'error');
+          console.error('Empty prompt response:', result);
         }
 
         if (result.error) {
