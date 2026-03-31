@@ -2,8 +2,10 @@
 set -e
 
 # ============================================================
-# fb-searcher — Raspberry Pi 5 Setup Script
+# fb-searcher — Raspberry Pi 5 Setup Script (virgin install)
 # Tested on: Raspberry Pi OS (Bookworm, 64-bit)
+# Run: curl -sL https://raw.githubusercontent.com/frankreb/fb-searcher/main/setup.sh | bash
+# Or:  git clone ... && cd fb-searcher && chmod +x setup.sh && ./setup.sh
 # ============================================================
 
 GREEN='\033[0;32m'
@@ -15,195 +17,282 @@ info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
-APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 NODE_VERSION="20"
+REPO_URL="https://github.com/frankreb/fb-searcher.git"
+INSTALL_DIR="$HOME/fb-searcher"
 
 echo ""
 echo "=========================================="
 echo "  fb-searcher — Raspberry Pi 5 Setup"
+echo "  Full virgin install"
 echo "=========================================="
 echo ""
 
 # -----------------------------------------------------------
-# 1. System packages
+# 0. Detect architecture
+# -----------------------------------------------------------
+ARCH=$(uname -m)
+info "Detected architecture: $ARCH"
+if [[ "$ARCH" != "aarch64" && "$ARCH" != "armv7l" && "$ARCH" != "x86_64" ]]; then
+  warn "Untested architecture: $ARCH. Proceeding anyway..."
+fi
+
+# -----------------------------------------------------------
+# 1. Base system packages (needed for everything else)
 # -----------------------------------------------------------
 info "Updating system packages..."
 sudo apt-get update -y
 sudo apt-get upgrade -y
 
-info "Installing system dependencies..."
+info "Installing base tools..."
+sudo apt-get install -y \
+  curl \
+  wget \
+  git \
+  ca-certificates \
+  gnupg \
+  build-essential \
+  python3 \
+  make \
+  gcc \
+  g++
 
-# Chromium package name varies by distro
+# -----------------------------------------------------------
+# 2. Chromium browser + dependencies for Puppeteer
+# -----------------------------------------------------------
+info "Installing Chromium and browser dependencies..."
+
+# Chromium package name varies by distro/version
 CHROMIUM_PKG=""
 if apt-cache show chromium &>/dev/null; then
   CHROMIUM_PKG="chromium"
 elif apt-cache show chromium-browser &>/dev/null; then
   CHROMIUM_PKG="chromium-browser"
-else
-  warn "Neither 'chromium' nor 'chromium-browser' found in apt. Will try snap fallback."
 fi
 
+# Install browser rendering dependencies
 sudo apt-get install -y \
-  curl \
-  git \
-  build-essential \
-  python3 \
   fonts-liberation \
+  fonts-noto-color-emoji \
   libatk-bridge2.0-0 \
   libatk1.0-0 \
   libcups2 \
+  libdbus-1-3 \
   libdrm2 \
   libgbm1 \
+  libgtk-3-0 \
   libnss3 \
   libxcomposite1 \
   libxdamage1 \
+  libxfixes3 \
   libxrandr2 \
   libxss1 \
   libxtst6 \
   xdg-utils \
   libpango-1.0-0 \
   libcairo2 \
-  libasound2t64 || sudo apt-get install -y libasound2
+  libasound2t64 2>/dev/null || sudo apt-get install -y libasound2
 
 # Install Chromium
 if [ -n "$CHROMIUM_PKG" ]; then
   sudo apt-get install -y "$CHROMIUM_PKG"
-else
+elif command -v snap &>/dev/null; then
   info "Installing Chromium via snap..."
   sudo snap install chromium
+else
+  error "Cannot install Chromium. No apt package or snap available."
 fi
 
-# Determine Chromium binary path
-if command -v chromium &>/dev/null; then
-  CHROMIUM_BIN=$(which chromium)
-elif command -v chromium-browser &>/dev/null; then
-  CHROMIUM_BIN=$(which chromium-browser)
-elif [ -f /snap/bin/chromium ]; then
-  CHROMIUM_BIN="/snap/bin/chromium"
-else
-  error "Could not find Chromium binary after installation. Install it manually."
-fi
+# Find the Chromium binary
+CHROMIUM_BIN=""
+for candidate in chromium chromium-browser /snap/bin/chromium; do
+  if command -v "$candidate" &>/dev/null || [ -x "$candidate" ]; then
+    CHROMIUM_BIN=$(command -v "$candidate" 2>/dev/null || echo "$candidate")
+    break
+  fi
+done
+[ -z "$CHROMIUM_BIN" ] && error "Chromium installed but binary not found."
 info "Chromium found at: $CHROMIUM_BIN"
 
+# Verify it runs
+"$CHROMIUM_BIN" --version 2>/dev/null && info "Chromium is working." || warn "Chromium installed but --version check failed. May still work."
+
 # -----------------------------------------------------------
-# 2. Node.js (via nvm)
+# 3. Node.js + npm (via nvm)
 # -----------------------------------------------------------
-if command -v node &> /dev/null; then
+info "Setting up Node.js v${NODE_VERSION}..."
+
+export NVM_DIR="$HOME/.nvm"
+
+# Install nvm if not present
+if [ ! -d "$NVM_DIR" ]; then
+  info "Installing nvm..."
+  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+fi
+
+# Load nvm into current shell
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"
+
+# Check if correct Node version exists
+if command -v node &>/dev/null; then
   CURRENT_NODE=$(node -v | sed 's/v//' | cut -d. -f1)
   if [ "$CURRENT_NODE" -ge "$NODE_VERSION" ]; then
     info "Node.js $(node -v) already installed."
   else
     warn "Node.js $(node -v) is too old. Installing v${NODE_VERSION}..."
-    INSTALL_NODE=true
+    nvm install "$NODE_VERSION"
+    nvm use "$NODE_VERSION"
+    nvm alias default "$NODE_VERSION"
   fi
 else
-  INSTALL_NODE=true
-fi
-
-if [ "${INSTALL_NODE:-false}" = true ]; then
-  info "Installing Node.js v${NODE_VERSION} via nvm..."
-  export NVM_DIR="$HOME/.nvm"
-  if [ ! -d "$NVM_DIR" ]; then
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-  fi
-  # shellcheck source=/dev/null
-  [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+  info "Installing Node.js v${NODE_VERSION}..."
   nvm install "$NODE_VERSION"
   nvm use "$NODE_VERSION"
   nvm alias default "$NODE_VERSION"
-  info "Node.js $(node -v) installed."
 fi
 
-# Make sure nvm is loaded
-export NVM_DIR="$HOME/.nvm"
+# Reload to be sure
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 
-# Verify node and npm are available
-command -v node &>/dev/null || error "Node.js installation failed. Please install Node.js >= ${NODE_VERSION} manually."
-command -v npm &>/dev/null || error "npm not found. It should come with Node.js. Try: nvm install ${NODE_VERSION}"
-info "Using Node.js $(node -v) and npm $(npm -v)"
+# Verify both node and npm work
+command -v node &>/dev/null || error "Node.js installation failed."
+command -v npm &>/dev/null || error "npm not found. Should come with Node.js."
+info "Node.js $(node -v) and npm $(npm -v) are ready."
+
+# Add nvm to shell profile if not already there
+for PROFILE_FILE in "$HOME/.bashrc" "$HOME/.profile"; do
+  if [ -f "$PROFILE_FILE" ]; then
+    if ! grep -q 'NVM_DIR' "$PROFILE_FILE"; then
+      info "Adding nvm to $PROFILE_FILE..."
+      cat >> "$PROFILE_FILE" << 'NVMRC'
+
+# nvm (Node Version Manager)
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"
+NVMRC
+    fi
+  fi
+done
 
 # -----------------------------------------------------------
-# 3. Codex CLI
+# 4. Codex CLI
 # -----------------------------------------------------------
-if command -v codex &> /dev/null; then
+if command -v codex &>/dev/null; then
   info "Codex CLI already installed."
 else
   info "Installing Codex CLI globally..."
   npm install -g @openai/codex
-  info "Codex CLI installed. Run 'codex' once to configure your auth."
+  if command -v codex &>/dev/null; then
+    info "Codex CLI installed successfully."
+  else
+    warn "Codex CLI installed but not in PATH. You may need to open a new terminal."
+  fi
 fi
 
 # -----------------------------------------------------------
-# 4. Project dependencies
+# 5. Clone or update the project
+# -----------------------------------------------------------
+if [ -d "$INSTALL_DIR/.git" ]; then
+  info "Project already cloned at $INSTALL_DIR. Pulling latest..."
+  cd "$INSTALL_DIR"
+  git pull
+elif [ -f "$INSTALL_DIR/package.json" ]; then
+  # We're running from inside the repo (user cloned manually)
+  info "Project found at $INSTALL_DIR."
+  cd "$INSTALL_DIR"
+else
+  info "Cloning fb-searcher to $INSTALL_DIR..."
+  git clone "$REPO_URL" "$INSTALL_DIR"
+  cd "$INSTALL_DIR"
+fi
+
+APP_DIR="$(pwd)"
+
+# -----------------------------------------------------------
+# 6. Install npm dependencies
 # -----------------------------------------------------------
 info "Installing project dependencies..."
-cd "$APP_DIR"
-
-# Tell Puppeteer to skip its bundled Chromium — we use the system one
 export PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-
-npm install
+npm install --production=false
 
 # -----------------------------------------------------------
-# 5. Build TypeScript
+# 7. Build TypeScript
 # -----------------------------------------------------------
 info "Building project..."
 npm run build
 
 # -----------------------------------------------------------
-# 6. Create data directories
+# 8. Create data directories
 # -----------------------------------------------------------
 mkdir -p "$APP_DIR/data"
 mkdir -p "$APP_DIR/cookies"
 
 # -----------------------------------------------------------
-# 7. Environment file
+# 9. Environment file
 # -----------------------------------------------------------
 if [ ! -f "$APP_DIR/.env" ]; then
-  info "Creating .env from .env.example..."
+  info "Creating .env from template..."
   cp "$APP_DIR/.env.example" "$APP_DIR/.env"
 
-  # Set Chromium path for Raspberry Pi
+  # Set the Chromium path
   echo "" >> "$APP_DIR/.env"
-  echo "# Raspberry Pi Chromium path" >> "$APP_DIR/.env"
+  echo "# Raspberry Pi Chromium path (auto-detected)" >> "$APP_DIR/.env"
   echo "PUPPETEER_EXECUTABLE_PATH=${CHROMIUM_BIN}" >> "$APP_DIR/.env"
 
-  warn "Please edit .env with your Telegram bot token, chat ID, and other settings:"
-  warn "  nano $APP_DIR/.env"
+  warn ">>> You MUST edit .env with your credentials before starting! <<<"
+  warn "    nano $APP_DIR/.env"
 else
   info ".env already exists, skipping."
 fi
 
 # -----------------------------------------------------------
-# 8. Puppeteer config for system Chromium
+# 10. Puppeteer config for system Chromium
 # -----------------------------------------------------------
-PUPPETEER_CONFIG="$APP_DIR/.puppeteerrc.cjs"
-if [ ! -f "$PUPPETEER_CONFIG" ]; then
-  info "Creating Puppeteer config for system Chromium..."
-  cat > "$PUPPETEER_CONFIG" << 'PCONF'
+cat > "$APP_DIR/.puppeteerrc.cjs" << PCONF
 const { join } = require('path');
-
-/**
- * @type {import("puppeteer").Configuration}
- */
 module.exports = {
   skipChromiumDownload: true,
-  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '${CHROMIUM_BIN}',
   cacheDirectory: join(__dirname, '.cache', 'puppeteer'),
 };
 PCONF
+info "Puppeteer configured to use system Chromium."
+
+# -----------------------------------------------------------
+# 11. Swap (Chromium needs memory)
+# -----------------------------------------------------------
+CURRENT_SWAP=$(free -m | awk '/^Swap:/ {print $2}')
+if [ "$CURRENT_SWAP" -lt 1024 ]; then
+  warn "Swap is only ${CURRENT_SWAP}MB. Increasing to 2GB for Chromium..."
+  if [ -f /etc/dphys-swapfile ]; then
+    sudo sed -i 's/^CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile
+    sudo dphys-swapfile setup
+    sudo dphys-swapfile swapon
+    info "Swap set to 2GB."
+  else
+    # Fallback: create a swap file manually
+    info "Creating 2GB swap file..."
+    sudo fallocate -l 2G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile
+    sudo swapon /swapfile
+    echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+    info "Swap file created and enabled."
+  fi
 fi
 
 # -----------------------------------------------------------
-# 9. Systemd service (auto-start on boot)
+# 12. Systemd service (auto-start on boot)
 # -----------------------------------------------------------
 SERVICE_FILE="/etc/systemd/system/fb-searcher.service"
-info "Setting up systemd service..."
+info "Creating systemd service..."
 
-# Resolve node path
 NODE_PATH=$(which node)
-NVM_DIR_RESOLVED="${NVM_DIR:-$HOME/.nvm}"
+NODE_DIR=$(dirname "$NODE_PATH")
+CODEX_PATH=$(which codex 2>/dev/null || echo "")
+NPM_GLOBAL_BIN=$(npm -g bin 2>/dev/null || echo "$NVM_DIR/versions/node/v${NODE_VERSION}.*/bin")
 
 sudo tee "$SERVICE_FILE" > /dev/null << SVCEOF
 [Unit]
@@ -218,7 +307,7 @@ WorkingDirectory=${APP_DIR}
 Environment=NODE_ENV=production
 Environment=PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 Environment=PUPPETEER_EXECUTABLE_PATH=${CHROMIUM_BIN}
-Environment=PATH=${NVM_DIR_RESOLVED}/versions/node/v${NODE_VERSION}.*/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=${NODE_DIR}:${NPM_GLOBAL_BIN}:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=${APP_DIR}/.env
 ExecStart=${NODE_PATH} ${APP_DIR}/dist/index.js
 Restart=on-failure
@@ -226,7 +315,7 @@ RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
-# Memory limits for Pi 5 (adjust as needed)
+# Memory limits for Pi 5 (adjust if needed)
 MemoryMax=512M
 MemoryHigh=384M
 
@@ -236,38 +325,36 @@ SVCEOF
 
 sudo systemctl daemon-reload
 sudo systemctl enable fb-searcher
+info "Systemd service created and enabled (auto-start on boot)."
 
 # -----------------------------------------------------------
-# 10. Swap (Puppeteer can be memory-hungry)
+# Done!
 # -----------------------------------------------------------
-CURRENT_SWAP=$(free -m | awk '/^Swap:/ {print $2}')
-if [ "$CURRENT_SWAP" -lt 1024 ]; then
-  warn "Swap is ${CURRENT_SWAP}MB. Chromium needs more memory."
-  info "Increasing swap to 2GB..."
-  sudo sed -i 's/^CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile 2>/dev/null || true
-  sudo dphys-swapfile setup 2>/dev/null || true
-  sudo dphys-swapfile swapon 2>/dev/null || true
-  info "Swap configured to 2GB."
-fi
+PI_IP=$(hostname -I | awk '{print $1}')
 
-# -----------------------------------------------------------
-# Done
-# -----------------------------------------------------------
 echo ""
 echo "=========================================="
 echo "  Setup complete!"
 echo "=========================================="
 echo ""
-info "Next steps:"
+echo "  Everything is installed:"
+echo "    - Chromium: $CHROMIUM_BIN"
+echo "    - Node.js:  $(node -v)"
+echo "    - npm:      $(npm -v)"
+echo "    - Codex:    $(command -v codex 2>/dev/null || echo 'open a new terminal to use')"
+echo "    - Project:  $APP_DIR"
 echo ""
-echo "  1. Edit your config:"
+echo "  ┌─────────────────────────────────────────────┐"
+echo "  │  NEXT STEPS (you must do these manually):   │"
+echo "  └─────────────────────────────────────────────┘"
+echo ""
+echo "  1. Edit your config with Telegram credentials:"
 echo "     nano $APP_DIR/.env"
 echo ""
 echo "  2. Add your Facebook cookies:"
 echo "     nano $APP_DIR/cookies/cookies.json"
-echo "     (see docs/SETUP.md for how to extract cookies)"
 echo ""
-echo "  3. Configure Codex CLI (for AI filtering):"
+echo "  3. (Optional) Set up Codex CLI for AI filtering:"
 echo "     codex"
 echo "     Then set AI_FILTER_ENABLED=true in .env"
 echo ""
@@ -277,6 +364,6 @@ echo ""
 echo "  5. Check logs:"
 echo "     journalctl -u fb-searcher -f"
 echo ""
-echo "  6. View the dashboard:"
-echo "     http://$(hostname -I | awk '{print $1}'):3000"
+echo "  6. Open the dashboard:"
+echo "     http://${PI_IP}:3000"
 echo ""
