@@ -129,22 +129,48 @@ Write a clear, specific filtering prompt (about 5-10 lines) that tells the AI:
 Output ONLY the prompt text, nothing else. No markdown, no quotes, no explanation. Just the raw prompt I'll give to the AI.`;
 
       const { execFile } = await import('child_process');
-      const output = await new Promise<string>((resolve, reject) => {
+      const fs = await import('fs');
+      const os = await import('os');
+      const tmpFile = path.join(os.tmpdir(), `codex-prompt-${Date.now()}.txt`);
+
+      console.log('[generate-prompt] Running Codex CLI...');
+
+      await new Promise<void>((resolve, reject) => {
         execFile('codex', [
           'exec',
           '--full-auto',
           '--skip-git-repo-check',
-          '-o', '/dev/stdout',
+          '-o', tmpFile,
           codexPrompt,
         ],
-          { timeout: 90000, maxBuffer: 1024 * 1024 },
+          { timeout: 90000, maxBuffer: 1024 * 1024 * 5 },
           (error, stdout, stderr) => {
-            if (error) reject(new Error(`Codex failed: ${error.message}\n${stderr}`));
-            else resolve(stdout.trim());
+            if (error) {
+              console.error('[generate-prompt] Codex error:', error.message);
+              console.error('[generate-prompt] stderr:', stderr);
+              reject(new Error(`Codex failed: ${error.message}\n${stderr}`));
+            } else {
+              console.log('[generate-prompt] Codex completed successfully');
+              resolve();
+            }
           }
         );
       });
 
+      // Read the output file
+      let output = '';
+      try {
+        output = fs.readFileSync(tmpFile, 'utf-8').trim();
+        fs.unlinkSync(tmpFile);
+      } catch {
+        console.error('[generate-prompt] Could not read Codex output file:', tmpFile);
+      }
+
+      if (!output) {
+        throw new Error('Codex produced empty output');
+      }
+
+      console.log('[generate-prompt] Generated prompt:', output.substring(0, 100) + '...');
       res.json({ prompt: output });
     } catch (err) {
       // Fallback: generate a basic prompt without Codex

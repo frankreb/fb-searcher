@@ -38,6 +38,8 @@ interface AiDecision {
 }
 
 function runCodex(prompt: string, timeoutMs: number = 120_000): Promise<string> {
+  const tmpOutput = path.join(process.cwd(), 'data', `codex-output-${Date.now()}.txt`);
+
   return new Promise((resolve, reject) => {
     execFile(
       'codex',
@@ -45,16 +47,26 @@ function runCodex(prompt: string, timeoutMs: number = 120_000): Promise<string> 
         'exec',
         '--full-auto',
         '--skip-git-repo-check',
-        '-o', '/dev/stdout',
+        '-o', tmpOutput,
         prompt,
       ],
       { timeout: timeoutMs, maxBuffer: 1024 * 1024 * 10 },
-      (error, stdout, stderr) => {
+      (error, _stdout, stderr) => {
         if (error) {
+          try { unlinkSync(tmpOutput); } catch {}
           reject(new Error(`Codex CLI failed: ${error.message}\nstderr: ${stderr}`));
           return;
         }
-        resolve(stdout);
+
+        // Read the output from the temp file
+        try {
+          const { readFileSync } = require('fs') as typeof import('fs');
+          const output = readFileSync(tmpOutput, 'utf-8').trim();
+          unlinkSync(tmpOutput);
+          resolve(output);
+        } catch (readErr) {
+          reject(new Error(`Codex completed but could not read output: ${readErr}`));
+        }
       },
     );
   });
