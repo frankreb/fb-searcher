@@ -32,11 +32,20 @@ export async function scrapeAll(config: AppConfig): Promise<RawScrapedItem[]> {
 
     for (const search of searches) {
       const criteria = JSON.parse(search.criteria_json);
-      if (criteria.groupUrls && Array.isArray(criteria.groupUrls)) {
-        criteria.groupUrls.forEach((url: string) => groupUrls.add(url));
+      const source = criteria.source || 'both';
+
+      // Add group URLs if source is 'groups' or 'both'
+      if (source === 'groups' || source === 'both') {
+        if (criteria.groupUrls && Array.isArray(criteria.groupUrls)) {
+          criteria.groupUrls.forEach((url: string) => groupUrls.add(url));
+        }
       }
-      if (criteria.keywords && criteria.keywords.length > 0) {
-        marketplaceQueries.push({ query: criteria.keywords.join(' '), criteria });
+
+      // Add marketplace query if source is 'marketplace' or 'both'
+      if (source === 'marketplace' || source === 'both') {
+        if (criteria.keywords && criteria.keywords.length > 0) {
+          marketplaceQueries.push({ query: criteria.keywords.join(' '), criteria });
+        }
       }
     }
 

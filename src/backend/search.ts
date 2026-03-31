@@ -1,6 +1,9 @@
 import { ScrapedItemRow } from './database';
 
+export type SearchSource = 'groups' | 'marketplace' | 'both';
+
 export interface SearchCriteria {
+  source?: SearchSource;
   keywords: string[];
   excludeKeywords: string[];
   groupUrls?: string[];
