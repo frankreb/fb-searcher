@@ -230,21 +230,27 @@
 
       <!-- AI Prompt -->
       <div style="border-top: 1px solid #eee; margin-top: 16px; padding-top: 16px;">
+        <div class="form-row">
+          <div class="form-group">
+            <label>What are you looking for? (tell Codex in your own words)</label>
+            <input type="text" id="search-user-input" placeholder="e.g. I want cheap sim racing gear in good condition, no broken stuff">
+          </div>
+        </div>
         <div class="form-row" style="align-items: center; margin-bottom: 8px;">
           <div class="form-group" style="flex: none; min-width: auto;">
             <label style="display: flex; align-items: center; gap: 8px;">
-              AI Prompt (Codex)
-              <button class="btn btn-sm" style="background: #7c4dff; color: #fff; font-size: 11px; padding: 3px 10px;" onclick="generatePrompt()">Generate Prompt</button>
+              AI Prompt
+              <button class="btn btn-sm" id="generate-btn" style="background: #7c4dff; color: #fff; font-size: 11px; padding: 3px 10px;" onclick="generatePrompt()">Generate with Codex</button>
             </label>
           </div>
         </div>
         <div class="form-row">
           <div class="form-group">
-            <textarea id="search-ai-prompt" rows="5" placeholder="Describe what you want Codex to look for. Click 'Generate Prompt' to auto-create one based on your search criteria."></textarea>
+            <textarea id="search-ai-prompt" rows="6" placeholder="Click 'Generate with Codex' to create a prompt from your search criteria, or write your own."></textarea>
           </div>
         </div>
         <p style="font-size: 11px; color: #999; margin-top: -4px;">
-          This prompt tells Codex how to filter results before sending them to Telegram. Leave empty to send all matches without AI filtering.
+          This prompt tells Codex how to filter scraped results before sending them to Telegram. Leave empty to send all matches without AI filtering.
         </p>
       </div>
 
@@ -375,7 +381,7 @@
     }
 
     function resetForm() {
-      ['search-name','search-keywords','search-exclude','search-groups','search-location','search-radius','search-price-min','search-price-max','search-category','search-max-age','search-ai-prompt'].forEach(id => {
+      ['search-name','search-keywords','search-exclude','search-groups','search-location','search-radius','search-price-min','search-price-max','search-category','search-max-age','search-ai-prompt','search-user-input'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = id === 'search-max-age' ? '7' : '';
       });
@@ -383,61 +389,56 @@
       document.getElementById('modal-edit-id').value = '';
     }
 
-    function generatePrompt() {
+    async function generatePrompt() {
+      const btn = document.getElementById('generate-btn');
       const source = document.getElementById('modal-source').value;
       const name = document.getElementById('search-name').value.trim();
       const keywords = document.getElementById('search-keywords').value.split(',').map(s => s.trim()).filter(Boolean);
       const excludeKeywords = document.getElementById('search-exclude').value.split(',').map(s => s.trim()).filter(Boolean);
+      const userInput = document.getElementById('search-user-input').value.trim();
+      const groupUrlsRaw = document.getElementById('search-groups').value.trim();
+      const groupUrls = groupUrlsRaw ? groupUrlsRaw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean) : [];
 
-      let parts = [];
-
-      parts.push('Review the following Facebook ' + (source === 'groups' ? 'group posts' : 'Marketplace listings') + ' and decide which ones I should see.');
-      parts.push('');
-
-      if (name) {
-        parts.push('This search is about: ' + name + '.');
-      }
-
-      if (keywords.length > 0) {
-        parts.push('I am looking for items related to: ' + keywords.join(', ') + '.');
-      }
-
-      if (excludeKeywords.length > 0) {
-        parts.push('Skip anything mentioning: ' + excludeKeywords.join(', ') + '.');
-      }
+      const body = {
+        source,
+        name,
+        keywords,
+        excludeKeywords,
+        groupUrls,
+        userInput,
+      };
 
       if (source === 'marketplace') {
-        const location = document.getElementById('search-location').value.trim();
-        const priceMin = document.getElementById('search-price-min').value;
-        const priceMax = document.getElementById('search-price-max').value;
-        const category = document.getElementById('search-category').value.trim();
-        const condition = document.getElementById('search-condition').value;
-
-        if (location) parts.push('Preferred location: ' + location + '.');
-        if (priceMin || priceMax) {
-          parts.push('Price range: $' + (priceMin || '0') + ' - $' + (priceMax || 'any') + '. Flag great deals that are well under budget.');
-        }
-        if (category) parts.push('Category: ' + category + '.');
-        if (condition) parts.push('Condition preference: ' + condition.replace(/_/g, ' ') + '.');
+        body.location = document.getElementById('search-location').value.trim();
+        body.priceMin = parseFloat(document.getElementById('search-price-min').value) || undefined;
+        body.priceMax = parseFloat(document.getElementById('search-price-max').value) || undefined;
+        body.category = document.getElementById('search-category').value.trim();
+        body.condition = document.getElementById('search-condition').value;
       }
 
-      if (source === 'groups') {
-        const groupUrls = document.getElementById('search-groups').value.trim();
-        if (groupUrls) {
-          const count = groupUrls.split(/[\n,]+/).filter(Boolean).length;
-          parts.push('Monitoring ' + count + ' group(s) for relevant posts.');
+      btn.textContent = 'Generating...';
+      btn.disabled = true;
+
+      try {
+        const result = await fetchJSON('/api/generate-prompt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+
+        document.getElementById('search-ai-prompt').value = result.prompt;
+
+        if (result.fallback) {
+          showToast('Codex unavailable — generated basic prompt. You can edit it.', 'error');
+        } else {
+          showToast('Prompt generated by Codex! Review and edit if needed.', 'success');
         }
+      } catch (e) {
+        showToast('Failed to generate prompt', 'error');
+      } finally {
+        btn.textContent = 'Generate with Codex';
+        btn.disabled = false;
       }
-
-      parts.push('');
-      parts.push('Rules:');
-      parts.push('- Only send me posts/listings that are genuinely relevant and look like real offers.');
-      parts.push('- Skip spam, scams, posts with no useful info, and anything that looks suspicious.');
-      parts.push('- Skip items that are clearly overpriced or not what I am looking for.');
-      parts.push('- For each item you approve, write a short summary of why it is worth my attention.');
-
-      document.getElementById('search-ai-prompt').value = parts.join('\n');
-      showToast('Prompt generated! Review and edit if needed.', 'success');
     }
 
     // ── CRUD ─────────────────────────────────────────

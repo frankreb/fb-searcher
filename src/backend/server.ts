@@ -14,8 +14,15 @@ export function startServer(port: number): void {
   const app = express();
   app.use(express.json());
 
-  // Serve admin UI
-  const frontendDir = path.join(__dirname, '..', 'frontend');
+  // Serve admin UI — check both src (dev) and dist (prod) locations
+  let frontendDir = path.join(__dirname, '..', 'frontend');
+  try {
+    require('fs').accessSync(path.join(frontendDir, 'index.html'));
+  } catch {
+    // Fallback for when running from dist/
+    frontendDir = path.join(__dirname, '..', '..', 'src', 'frontend');
+  }
+  app.use('/static', express.static(frontendDir));
   app.get('/', (_req, res) => {
     res.sendFile(path.join(frontendDir, 'index.html'));
   });
@@ -42,24 +49,46 @@ export function startServer(port: number): void {
     res.status(201).json({ id, name, criteria });
   });
 
-  app.put('/api/searches/:id', (req, res) => {
-    const { name, criteria } = req.body;
-    const existing = getSearchById(req.params.id);
-    if (!existing) {
-      res.status(404).json({ error: 'Search not found' });
-      return;
+  app.get('/api/searches/:id', (req, res) => {
+    try {
+      const search = getSearchById(req.params.id);
+      if (!search) {
+        res.status(404).json({ error: 'Search not found' });
+        return;
+      }
+      res.json({ ...search, criteria: JSON.parse(search.criteria_json) });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
     }
-    updateSearch(
-      req.params.id,
-      name || existing.name,
-      criteria ? JSON.stringify(criteria) : existing.criteria_json,
-    );
-    res.json({ success: true, id: req.params.id });
+  });
+
+  app.put('/api/searches/:id', (req, res) => {
+    try {
+      const { name, criteria } = req.body;
+      const searchId = req.params.id;
+      const existing = getSearchById(searchId);
+      if (!existing) {
+        res.status(404).json({ error: 'Search not found' });
+        return;
+      }
+      updateSearch(
+        searchId,
+        name || existing.name,
+        criteria ? JSON.stringify(criteria) : existing.criteria_json,
+      );
+      res.json({ success: true, id: searchId });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
   });
 
   app.delete('/api/searches/:id', (req, res) => {
-    deleteSearch(req.params.id);
-    res.json({ success: true });
+    try {
+      deleteSearch(req.params.id);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
   });
 
   app.get('/api/items', (req, res) => {
@@ -67,6 +96,66 @@ export function startServer(port: number): void {
     const offset = parseInt(req.query.offset as string) || 0;
     const items = getRecentItems(limit, offset);
     res.json(items);
+  });
+
+  app.post('/api/generate-prompt', async (req, res) => {
+    try {
+      const { source, name, keywords, excludeKeywords, groupUrls, location, priceMin, priceMax, category, condition, userInput } = req.body;
+
+      // Build a description of the search for Codex
+      const parts: string[] = [];
+      parts.push(`I have a Facebook ${source === 'groups' ? 'Groups' : 'Marketplace'} scraper.`);
+      if (name) parts.push(`Search name: "${name}".`);
+      if (keywords?.length) parts.push(`Keywords: ${keywords.join(', ')}.`);
+      if (excludeKeywords?.length) parts.push(`Exclude: ${excludeKeywords.join(', ')}.`);
+      if (groupUrls?.length) parts.push(`Monitoring ${groupUrls.length} Facebook group(s).`);
+      if (location) parts.push(`Location: ${location}.`);
+      if (priceMin || priceMax) parts.push(`Price range: $${priceMin || 0} - $${priceMax || 'any'}.`);
+      if (category) parts.push(`Category: ${category}.`);
+      if (condition) parts.push(`Condition: ${condition}.`);
+      if (userInput) parts.push(`Additional context from user: ${userInput}`);
+
+      const codexPrompt = `I need you to write a filtering prompt for an AI that reviews Facebook ${source === 'groups' ? 'group posts' : 'Marketplace listings'} and decides which ones to forward to me via Telegram.
+
+Here is my search context:
+${parts.join('\n')}
+
+Write a clear, specific filtering prompt (about 5-10 lines) that tells the AI:
+1. What I'm looking for (be specific based on the context above)
+2. What to skip (spam, scams, irrelevant posts, overpriced items)
+3. What makes a result worth sending to me
+4. Any special rules based on the search criteria
+
+Output ONLY the prompt text, nothing else. No markdown, no quotes, no explanation. Just the raw prompt I'll give to the AI.`;
+
+      const { execFile } = await import('child_process');
+      const output = await new Promise<string>((resolve, reject) => {
+        execFile('codex', ['--quiet', '--full-stdout', '--approval-mode', 'full-auto', codexPrompt],
+          { timeout: 60000, maxBuffer: 1024 * 1024 },
+          (error, stdout, stderr) => {
+            if (error) reject(new Error(`Codex failed: ${error.message}`));
+            else resolve(stdout.trim());
+          }
+        );
+      });
+
+      res.json({ prompt: output });
+    } catch (err) {
+      // Fallback: generate a basic prompt without Codex
+      const { source, name, keywords, excludeKeywords, location, priceMin, priceMax } = req.body;
+      const lines: string[] = [];
+      lines.push(`Review the following Facebook ${source === 'groups' ? 'group posts' : 'Marketplace listings'} and decide which ones I should see.`);
+      if (name) lines.push(`This search is about: ${name}.`);
+      if (keywords?.length) lines.push(`I am looking for: ${keywords.join(', ')}.`);
+      if (excludeKeywords?.length) lines.push(`Skip anything mentioning: ${excludeKeywords.join(', ')}.`);
+      if (location) lines.push(`Preferred location: ${location}.`);
+      if (priceMin || priceMax) lines.push(`Price range: $${priceMin || 0} - $${priceMax || 'any'}.`);
+      lines.push('');
+      lines.push('Only send me genuinely relevant items. Skip spam, scams, and overpriced listings.');
+      lines.push('For each approved item, write a short summary of why it is worth my attention.');
+
+      res.json({ prompt: lines.join('\n'), fallback: true, error: String(err) });
+    }
   });
 
   app.post('/api/scrape', async (_req, res) => {
