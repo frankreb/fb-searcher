@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>fb-searcher Admin</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
+    header { background: #1877f2; color: #fff; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
+    header h1 { font-size: 20px; font-weight: 600; }
+    .status-badge { padding: 4px 12px; border-radius: 12px; font-size: 13px; font-weight: 500; }
+    .status-badge.ok { background: #42b72a; }
+    .status-badge.warn { background: #f5a623; }
+    .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 32px; }
+    .card { background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .card .label { font-size: 12px; text-transform: uppercase; color: #888; margin-bottom: 4px; }
+    .card .value { font-size: 28px; font-weight: 700; color: #1877f2; }
+    .section { background: #fff; border-radius: 8px; padding: 24px; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .section h2 { font-size: 18px; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; }
+    th { font-weight: 600; color: #666; font-size: 12px; text-transform: uppercase; }
+    tr:hover td { background: #fafafa; }
+    .btn { display: inline-flex; align-items: center; gap: 4px; padding: 8px 16px; border: none; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; transition: opacity 0.15s; }
+    .btn:hover { opacity: 0.85; }
+    .btn-primary { background: #1877f2; color: #fff; }
+    .btn-danger { background: #e4405f; color: #fff; }
+    .btn-success { background: #42b72a; color: #fff; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .form-row { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+    .form-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 180px; }
+    .form-group label { font-size: 12px; font-weight: 600; color: #666; text-transform: uppercase; }
+    .form-group input, .form-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+    .form-group input:focus, .form-group select:focus { outline: none; border-color: #1877f2; }
+    .tag { display: inline-block; padding: 2px 8px; background: #e7f3ff; color: #1877f2; border-radius: 4px; font-size: 12px; margin: 2px; }
+    .source-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+    .source-badge.group { background: #e7f3ff; color: #1877f2; }
+    .source-badge.marketplace { background: #fff3e0; color: #e65100; }
+    .empty { text-align: center; padding: 40px; color: #999; }
+    .toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: 8px; color: #fff; font-size: 14px; z-index: 100; transition: opacity 0.3s; }
+    .toast.success { background: #42b72a; }
+    .toast.error { background: #e4405f; }
+    #modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 50; justify-content: center; align-items: center; }
+    #modal-overlay.active { display: flex; }
+    .modal { background: #fff; border-radius: 12px; padding: 28px; width: 90%; max-width: 600px; max-height: 85vh; overflow-y: auto; }
+    .modal h3 { margin-bottom: 20px; font-size: 18px; }
+    .modal-actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; }
+    .truncate { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>fb-searcher Admin</h1>
+    <span id="status-badge" class="status-badge ok">Loading...</span>
+  </header>
+
+  <div class="container">
+    <!-- Status Cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="label">Total Items</div>
+        <div class="value" id="stat-items">--</div>
+      </div>
+      <div class="card">
+        <div class="label">Active Searches</div>
+        <div class="value" id="stat-searches">--</div>
+      </div>
+      <div class="card">
+        <div class="label">Last Scrape</div>
+        <div class="value" id="stat-last-run" style="font-size:16px;">--</div>
+      </div>
+      <div class="card">
+        <div class="label">Errors (24h)</div>
+        <div class="value" id="stat-errors">--</div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div style="margin-bottom: 24px; display: flex; gap: 12px;">
+      <button class="btn btn-success" onclick="triggerScrape()">Run Scrape Now</button>
+      <button class="btn btn-primary" onclick="refreshAll()">Refresh</button>
+    </div>
+
+    <!-- Searches -->
+    <div class="section">
+      <h2>
+        Active Searches
+        <button class="btn btn-primary btn-sm" onclick="openNewSearchModal()">+ New Search</button>
+      </h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Keywords</th>
+            <th>Filters</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="searches-body"></tbody>
+      </table>
+      <div id="searches-empty" class="empty" style="display:none;">No active searches. Create one to start monitoring.</div>
+    </div>
+
+    <!-- Recent Items -->
+    <div class="section">
+      <h2>Recent Items</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th>Title</th>
+            <th>Price</th>
+            <th>Location</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody id="items-body"></tbody>
+      </table>
+      <div id="items-empty" class="empty" style="display:none;">No items scraped yet.</div>
+      <div style="margin-top: 16px; text-align: center;">
+        <button class="btn btn-primary btn-sm" id="load-more-btn" onclick="loadMoreItems()" style="display:none;">Load More</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New Search Modal -->
+  <div id="modal-overlay" onclick="closeModal(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+      <h3>New Search</h3>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Search Name</label>
+          <input type="text" id="search-name" placeholder="e.g. Cheap iPhones">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Keywords (comma-separated)</label>
+          <input type="text" id="search-keywords" placeholder="e.g. iphone, apple">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Exclude Keywords</label>
+          <input type="text" id="search-exclude" placeholder="e.g. broken, cracked">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Group URLs (one per line)</label>
+          <input type="text" id="search-groups" placeholder="https://facebook.com/groups/...">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Location</label>
+          <input type="text" id="search-location" placeholder="e.g. New York">
+        </div>
+        <div class="form-group">
+          <label>Radius (km)</label>
+          <input type="number" id="search-radius" placeholder="50">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Min Price</label>
+          <input type="number" id="search-price-min" placeholder="0">
+        </div>
+        <div class="form-group">
+          <label>Max Price</label>
+          <input type="number" id="search-price-max" placeholder="1000">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Category</label>
+          <input type="text" id="search-category" placeholder="e.g. electronics">
+        </div>
+        <div class="form-group">
+          <label>Condition</label>
+          <select id="search-condition">
+            <option value="">Any</option>
+            <option value="new">New</option>
+            <option value="used_like_new">Used - Like New</option>
+            <option value="used_good">Used - Good</option>
+            <option value="used_fair">Used - Fair</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" style="background:#eee;" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="createSearch()">Create Search</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = '';
+    let itemsOffset = 0;
+    const ITEMS_LIMIT = 50;
+
+    async function fetchJSON(url, opts) {
+      const res = await fetch(API + url, opts);
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    }
+
+    function showToast(msg, type) {
+      const el = document.createElement('div');
+      el.className = 'toast ' + type;
+      el.textContent = msg;
+      document.body.appendChild(el);
+      setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 3000);
+    }
+
+    function formatTime(iso) {
+      if (!iso) return '--';
+      const d = new Date(iso);
+      const now = new Date();
+      const diff = Math.floor((now.getTime() - d.getTime()) / 60000);
+      if (diff < 1) return 'just now';
+      if (diff < 60) return diff + 'm ago';
+      if (diff < 1440) return Math.floor(diff / 60) + 'h ago';
+      return d.toLocaleDateString();
+    }
+
+    async function loadStatus() {
+      try {
+        const s = await fetchJSON('/api/status');
+        document.getElementById('stat-items').textContent = s.totalItems;
+        document.getElementById('stat-searches').textContent = s.activeSearches;
+        document.getElementById('stat-last-run').textContent = formatTime(s.lastRunAt);
+        document.getElementById('stat-errors').textContent = s.recentErrors;
+        const badge = document.getElementById('status-badge');
+        if (s.recentErrors > 0) {
+          badge.textContent = s.recentErrors + ' errors';
+          badge.className = 'status-badge warn';
+        } else {
+          badge.textContent = 'Healthy';
+          badge.className = 'status-badge ok';
+        }
+      } catch (e) {
+        document.getElementById('status-badge').textContent = 'Offline';
+        document.getElementById('status-badge').className = 'status-badge warn';
+      }
+    }
+
+    async function loadSearches() {
+      try {
+        const searches = await fetchJSON('/api/searches');
+        const tbody = document.getElementById('searches-body');
+        const empty = document.getElementById('searches-empty');
+        if (searches.length === 0) {
+          tbody.innerHTML = '';
+          empty.style.display = 'block';
+          return;
+        }
+        empty.style.display = 'none';
+        tbody.innerHTML = searches.map(s => {
+          const c = s.criteria || {};
+          const kw = (c.keywords || []).map(k => '<span class="tag">' + esc(k) + '</span>').join('');
+          const filters = [];
+          if (c.location) filters.push(esc(c.location));
+          if (c.priceMin != null || c.priceMax != null) filters.push('$' + (c.priceMin || 0) + '-' + (c.priceMax || '...'));
+          if (c.category) filters.push(esc(c.category));
+          if (c.condition) filters.push(esc(c.condition));
+          return '<tr>' +
+            '<td>' + esc(s.name) + '</td>' +
+            '<td>' + (kw || '<span style="color:#999">none</span>') + '</td>' +
+            '<td>' + (filters.join(', ') || '--') + '</td>' +
+            '<td><button class="btn btn-danger btn-sm" onclick="deleteSearch(\'' + s.id + '\')">Delete</button></td>' +
+            '</tr>';
+        }).join('');
+      } catch (e) {
+        showToast('Failed to load searches', 'error');
+      }
+    }
+
+    async function loadItems(append) {
+      try {
+        if (!append) itemsOffset = 0;
+        const items = await fetchJSON('/api/items?limit=' + ITEMS_LIMIT + '&offset=' + itemsOffset);
+        const tbody = document.getElementById('items-body');
+        const empty = document.getElementById('items-empty');
+        const btn = document.getElementById('load-more-btn');
+        if (items.length === 0 && !append) {
+          tbody.innerHTML = '';
+          empty.style.display = 'block';
+          btn.style.display = 'none';
+          return;
+        }
+        empty.style.display = 'none';
+        const html = items.map(item => {
+          const src = item.source === 'facebook_group' ? 'group' : 'marketplace';
+          const srcLabel = item.source === 'facebook_group' ? 'Group' : 'Mkt';
+          const title = item.title || item.body?.substring(0, 80) || '--';
+          const price = item.price != null ? '$' + Number(item.price).toFixed(0) : '--';
+          return '<tr>' +
+            '<td><span class="source-badge ' + src + '">' + srcLabel + '</span></td>' +
+            '<td class="truncate">' + (item.url ? '<a href="' + esc(item.url) + '" target="_blank">' + esc(title) + '</a>' : esc(title)) + '</td>' +
+            '<td>' + price + '</td>' +
+            '<td>' + esc(item.location || '--') + '</td>' +
+            '<td>' + formatTime(item.created_at) + '</td>' +
+            '</tr>';
+        }).join('');
+        if (append) {
+          tbody.innerHTML += html;
+        } else {
+          tbody.innerHTML = html;
+        }
+        btn.style.display = items.length >= ITEMS_LIMIT ? 'inline-flex' : 'none';
+        itemsOffset += items.length;
+      } catch (e) {
+        showToast('Failed to load items', 'error');
+      }
+    }
+
+    function loadMoreItems() { loadItems(true); }
+
+    async function deleteSearch(id) {
+      if (!confirm('Delete this search?')) return;
+      try {
+        await fetchJSON('/api/searches/' + id, { method: 'DELETE' });
+        showToast('Search deleted', 'success');
+        loadSearches();
+        loadStatus();
+      } catch (e) {
+        showToast('Failed to delete search', 'error');
+      }
+    }
+
+    async function triggerScrape() {
+      try {
+        await fetchJSON('/api/scrape', { method: 'POST' });
+        showToast('Scrape job triggered', 'success');
+      } catch (e) {
+        showToast('Failed to trigger scrape', 'error');
+      }
+    }
+
+    function openNewSearchModal() {
+      document.getElementById('modal-overlay').classList.add('active');
+    }
+
+    function closeModal(e) {
+      if (!e || e.target.id === 'modal-overlay') {
+        document.getElementById('modal-overlay').classList.remove('active');
+      }
+    }
+
+    async function createSearch() {
+      const name = document.getElementById('search-name').value.trim();
+      const keywords = document.getElementById('search-keywords').value.split(',').map(s => s.trim()).filter(Boolean);
+      const excludeKeywords = document.getElementById('search-exclude').value.split(',').map(s => s.trim()).filter(Boolean);
+      const groupUrlsRaw = document.getElementById('search-groups').value.trim();
+      const groupUrls = groupUrlsRaw ? groupUrlsRaw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean) : [];
+      const location = document.getElementById('search-location').value.trim() || undefined;
+      const radius = parseInt(document.getElementById('search-radius').value) || undefined;
+      const priceMin = parseFloat(document.getElementById('search-price-min').value) || undefined;
+      const priceMax = parseFloat(document.getElementById('search-price-max').value) || undefined;
+      const category = document.getElementById('search-category').value.trim() || undefined;
+      const condition = document.getElementById('search-condition').value || undefined;
+
+      if (!name) { showToast('Name is required', 'error'); return; }
+      if (keywords.length === 0 && groupUrls.length === 0) { showToast('Add keywords or group URLs', 'error'); return; }
+
+      const criteria = { keywords, excludeKeywords, regexPatterns: [], groupUrls, location, radius, priceMin, priceMax, category, condition };
+
+      try {
+        await fetchJSON('/api/searches', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, criteria }),
+        });
+        showToast('Search created', 'success');
+        closeModal();
+        // Reset form
+        ['search-name','search-keywords','search-exclude','search-groups','search-location','search-radius','search-price-min','search-price-max','search-category'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('search-condition').value = '';
+        loadSearches();
+        loadStatus();
+      } catch (e) {
+        showToast('Failed to create search', 'error');
+      }
+    }
+
+    function esc(s) {
+      if (!s) return '';
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function refreshAll() {
+      loadStatus();
+      loadSearches();
+      loadItems(false);
+    }
+
+    refreshAll();
+    setInterval(loadStatus, 30000);
+  </script>
+</body>
+</html>

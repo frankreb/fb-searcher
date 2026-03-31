@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+*.db
+*.sqlite
+cookies/
+sessions/
+*.log
+.DS_Store
+Thumbs.db
