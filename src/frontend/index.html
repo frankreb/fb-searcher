@@ -145,8 +145,9 @@
         <span id="modal-badge" class="source-badge"></span>
       </h3>
 
-      <!-- Hidden: which source type -->
+      <!-- Hidden fields -->
       <input type="hidden" id="modal-source" value="">
+      <input type="hidden" id="modal-edit-id" value="">
 
       <div class="form-row">
         <div class="form-group">
@@ -249,7 +250,7 @@
 
       <div class="modal-actions">
         <button class="btn" style="background:#eee;" onclick="closeModal()">Cancel</button>
-        <button class="btn btn-primary" id="modal-submit" onclick="createSearch()">Create Search</button>
+        <button class="btn btn-primary" id="modal-submit" onclick="saveSearch()">Create Search</button>
       </div>
     </div>
   </div>
@@ -258,6 +259,7 @@
     const API = '';
     let itemsOffset = 0;
     const ITEMS_LIMIT = 50;
+    let searchesCache = [];
 
     async function fetchJSON(url, opts) {
       const res = await fetch(API + url, opts);
@@ -287,7 +289,9 @@
     // ── Modal logic ──────────────────────────────────
 
     function openModal(source) {
+      resetForm();
       document.getElementById('modal-source').value = source;
+      document.getElementById('modal-edit-id').value = '';
       const badge = document.getElementById('modal-badge');
       const title = document.getElementById('modal-title');
       const submitBtn = document.getElementById('modal-submit');
@@ -298,6 +302,7 @@
         title.textContent = 'New Groups Search';
         badge.textContent = 'GROUPS';
         badge.className = 'source-badge groups';
+        submitBtn.textContent = 'Create Search';
         submitBtn.className = 'btn btn-groups';
         groupsFields.style.display = 'block';
         marketFields.style.display = 'none';
@@ -305,10 +310,59 @@
         title.textContent = 'New Marketplace Search';
         badge.textContent = 'MARKETPLACE';
         badge.className = 'source-badge marketplace';
+        submitBtn.textContent = 'Create Search';
         submitBtn.className = 'btn btn-marketplace';
         groupsFields.style.display = 'none';
         marketFields.style.display = 'block';
       }
+
+      document.getElementById('modal-overlay').classList.add('active');
+    }
+
+    function editSearch(searchObj) {
+      const c = searchObj.criteria || {};
+      const source = c.source || 'both';
+
+      resetForm();
+      document.getElementById('modal-edit-id').value = searchObj.id;
+      document.getElementById('modal-source').value = source;
+
+      const badge = document.getElementById('modal-badge');
+      const title = document.getElementById('modal-title');
+      const submitBtn = document.getElementById('modal-submit');
+      const groupsFields = document.getElementById('fields-groups');
+      const marketFields = document.getElementById('fields-marketplace');
+
+      if (source === 'groups') {
+        title.textContent = 'Edit Groups Search';
+        badge.textContent = 'GROUPS';
+        badge.className = 'source-badge groups';
+        submitBtn.className = 'btn btn-groups';
+        groupsFields.style.display = 'block';
+        marketFields.style.display = 'none';
+      } else {
+        title.textContent = 'Edit Marketplace Search';
+        badge.textContent = 'MARKETPLACE';
+        badge.className = 'source-badge marketplace';
+        submitBtn.className = 'btn btn-marketplace';
+        groupsFields.style.display = 'none';
+        marketFields.style.display = 'block';
+      }
+      submitBtn.textContent = 'Save Changes';
+
+      // Fill in fields
+      document.getElementById('search-name').value = searchObj.name || '';
+      document.getElementById('search-keywords').value = (c.keywords || []).join(', ');
+      document.getElementById('search-exclude').value = (c.excludeKeywords || []).join(', ');
+      document.getElementById('search-groups').value = (c.groupUrls || []).join('\n');
+      document.getElementById('search-location').value = c.location || '';
+      document.getElementById('search-radius').value = c.radius || '';
+      document.getElementById('search-price-min').value = c.priceMin || '';
+      document.getElementById('search-price-max').value = c.priceMax || '';
+      document.getElementById('search-category').value = c.category || '';
+      document.getElementById('search-condition').value = c.condition || '';
+      document.getElementById('search-max-age').value = c.maxAgeDays || '7';
+      document.getElementById('search-ai-prompt').value = c.aiPrompt || '';
 
       document.getElementById('modal-overlay').classList.add('active');
     }
@@ -326,6 +380,7 @@
         if (el) el.value = id === 'search-max-age' ? '7' : '';
       });
       document.getElementById('search-condition').value = '';
+      document.getElementById('modal-edit-id').value = '';
     }
 
     function generatePrompt() {
@@ -387,7 +442,8 @@
 
     // ── CRUD ─────────────────────────────────────────
 
-    async function createSearch() {
+    async function saveSearch() {
+      const editId = document.getElementById('modal-edit-id').value;
       const source = document.getElementById('modal-source').value;
       const name = document.getElementById('search-name').value.trim();
       const keywords = document.getElementById('search-keywords').value.split(',').map(s => s.trim()).filter(Boolean);
@@ -432,17 +488,28 @@
       }
 
       try {
-        await fetchJSON('/api/searches', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, criteria }),
-        });
-        showToast('Search created!', 'success');
+        if (editId) {
+          // Update existing
+          await fetchJSON('/api/searches/' + editId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, criteria }),
+          });
+          showToast('Search updated!', 'success');
+        } else {
+          // Create new
+          await fetchJSON('/api/searches', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, criteria }),
+          });
+          showToast('Search created!', 'success');
+        }
         closeModal();
         loadSearches();
         loadStatus();
       } catch (e) {
-        showToast('Failed to create search', 'error');
+        showToast('Failed to save search', 'error');
       }
     }
 
@@ -484,6 +551,7 @@
     async function loadSearches() {
       try {
         const searches = await fetchJSON('/api/searches');
+        searchesCache = searches;
         const tbody = document.getElementById('searches-body');
         const empty = document.getElementById('searches-empty');
         if (searches.length === 0) {
@@ -492,7 +560,7 @@
           return;
         }
         empty.style.display = 'none';
-        tbody.innerHTML = searches.map(s => {
+        tbody.innerHTML = searches.map((s, idx) => {
           const c = s.criteria || {};
           const source = c.source || 'both';
 
@@ -533,7 +601,10 @@
             '<td>' + esc(s.name) + '</td>' +
             '<td>' + kwCol + '</td>' +
             '<td>' + (filters.join(', ') || '--') + '</td>' +
-            '<td><button class="btn btn-danger btn-sm" onclick="deleteSearch(\'' + s.id + '\')">Delete</button></td>' +
+            '<td style="white-space:nowrap;">' +
+              '<button class="btn btn-primary btn-sm" style="margin-right:4px;" onclick="editSearch(searchesCache[' + idx + '])">Edit</button>' +
+              '<button class="btn btn-danger btn-sm" onclick="deleteSearch(\'' + s.id + '\')">Delete</button>' +
+            '</td>' +
             '</tr>';
         }).join('');
       } catch (e) {

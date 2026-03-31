@@ -151,6 +151,16 @@ export function getActiveSearches(): SearchRow[] {
   return stmt.all() as SearchRow[];
 }
 
+export function updateSearch(id: string, name: string, criteriaJson: string): void {
+  const stmt = getDb().prepare(`UPDATE searches SET name = ?, criteria_json = ?, updated_at = datetime('now') WHERE id = ?`);
+  stmt.run(name, criteriaJson, id);
+}
+
+export function getSearchById(id: string): SearchRow | undefined {
+  const stmt = getDb().prepare('SELECT * FROM searches WHERE id = ?');
+  return stmt.get(id) as SearchRow | undefined;
+}
+
 export function deleteSearch(id: string): void {
   const stmt = getDb().prepare('UPDATE searches SET active = 0, updated_at = datetime(\'now\') WHERE id = ?');
   stmt.run(id);

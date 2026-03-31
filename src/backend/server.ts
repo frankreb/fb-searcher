@@ -2,7 +2,9 @@ import express from 'express';
 import * as path from 'path';
 import {
   getActiveSearches,
+  getSearchById,
   insertSearch,
+  updateSearch,
   deleteSearch,
   getRecentItems,
 } from './database';
@@ -38,6 +40,21 @@ export function startServer(port: number): void {
     }
     const id = insertSearch(name, JSON.stringify(criteria));
     res.status(201).json({ id, name, criteria });
+  });
+
+  app.put('/api/searches/:id', (req, res) => {
+    const { name, criteria } = req.body;
+    const existing = getSearchById(req.params.id);
+    if (!existing) {
+      res.status(404).json({ error: 'Search not found' });
+      return;
+    }
+    updateSearch(
+      req.params.id,
+      name || existing.name,
+      criteria ? JSON.stringify(criteria) : existing.criteria_json,
+    );
+    res.json({ success: true, id: req.params.id });
   });
 
   app.delete('/api/searches/:id', (req, res) => {
