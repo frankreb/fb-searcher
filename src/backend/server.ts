@@ -128,69 +128,76 @@ Write a clear, specific filtering prompt (about 5-10 lines) that tells the AI:
 
 Output ONLY the prompt text, nothing else. No markdown, no quotes, no explanation. Just the raw prompt I'll give to the AI.`;
 
-      const { execFile } = await import('child_process');
+      const { spawn } = await import('child_process');
       const fs = await import('fs');
       const os = await import('os');
       const tmpFile = path.join(os.tmpdir(), `codex-prompt-${Date.now()}.txt`);
 
-      console.log('[generate-prompt] Running Codex CLI...');
+      console.log('[generate-prompt] Running Codex CLI via stdin...');
       console.log('[generate-prompt] Output file:', tmpFile);
 
-      const { stdout: codexStdout, stderr: codexStderr } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-        execFile('codex', [
+      const output = await new Promise<string>((resolve, reject) => {
+        const proc = spawn('codex', [
           'exec',
           '--full-auto',
           '--skip-git-repo-check',
           '-o', tmpFile,
-          codexPrompt,
-        ],
-          { timeout: 90000, maxBuffer: 1024 * 1024 * 5 },
-          (error, stdout, stderr) => {
-            if (error) {
-              console.error('[generate-prompt] Codex exit error:', error.message);
-              console.error('[generate-prompt] stdout:', stdout?.substring(0, 500));
-              console.error('[generate-prompt] stderr:', stderr?.substring(0, 500));
-              reject(new Error(`Codex failed: ${error.message}`));
+          '-',
+        ], { timeout: 90000 });
+
+        let stdout = '';
+        let stderr = '';
+
+        proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+        proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+        // Send prompt via stdin
+        proc.stdin.write(codexPrompt);
+        proc.stdin.end();
+
+        proc.on('close', (code) => {
+          console.log('[generate-prompt] Codex exit code:', code);
+          console.log('[generate-prompt] stdout length:', stdout.length);
+          console.log('[generate-prompt] stdout preview:', JSON.stringify(stdout.substring(0, 500)));
+          console.log('[generate-prompt] stderr:', JSON.stringify(stderr.substring(0, 500)));
+
+          // Try -o file first
+          let result = '';
+          try {
+            if (fs.existsSync(tmpFile)) {
+              result = fs.readFileSync(tmpFile, 'utf-8').trim();
+              fs.unlinkSync(tmpFile);
+              console.log('[generate-prompt] Read from -o file, length:', result.length);
+              console.log('[generate-prompt] -o file preview:', JSON.stringify(result.substring(0, 300)));
             } else {
-              resolve({ stdout, stderr });
+              console.log('[generate-prompt] -o file does not exist');
             }
+          } catch {}
+
+          // Fallback to stdout (strip ANSI codes)
+          if (!result && stdout) {
+            result = stdout
+              .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+              .replace(/[\x00-\x09\x0b-\x1f]/g, '')
+              .trim();
+            console.log('[generate-prompt] Using cleaned stdout, length:', result.length);
           }
-        );
+
+          if (code !== 0 && !result) {
+            reject(new Error(`Codex exit code ${code}: ${stderr}`));
+          } else if (!result) {
+            reject(new Error('Codex produced empty output'));
+          } else {
+            resolve(result);
+          }
+        });
+
+        proc.on('error', (err) => {
+          reject(new Error(`Codex spawn error: ${err.message}`));
+        });
       });
 
-      console.log('[generate-prompt] Codex stdout length:', codexStdout?.length);
-      console.log('[generate-prompt] Codex stderr length:', codexStderr?.length);
-
-      // Try reading from -o output file first
-      let output = '';
-      try {
-        if (fs.existsSync(tmpFile)) {
-          output = fs.readFileSync(tmpFile, 'utf-8').trim();
-          fs.unlinkSync(tmpFile);
-          console.log('[generate-prompt] Read from -o file, length:', output.length);
-        } else {
-          console.log('[generate-prompt] Output file does not exist');
-        }
-      } catch (readErr) {
-        console.error('[generate-prompt] Error reading output file:', readErr);
-      }
-
-      // If -o file was empty, try parsing stdout
-      if (!output && codexStdout) {
-        console.log('[generate-prompt] Falling back to stdout');
-        console.log('[generate-prompt] stdout preview:', codexStdout.substring(0, 300));
-        // Strip ANSI escape codes and control characters
-        output = codexStdout
-          .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-          .replace(/[\x00-\x09\x0b-\x1f]/g, '')
-          .trim();
-      }
-
-      if (!output) {
-        throw new Error('Codex produced empty output (both -o file and stdout empty)');
-      }
-
-      console.log('[generate-prompt] Final prompt preview:', output.substring(0, 200));
+      console.log('[generate-prompt] Final prompt:', output.substring(0, 200));
       res.json({ prompt: output });
     } catch (err) {
       // Fallback: generate a basic prompt without Codex
