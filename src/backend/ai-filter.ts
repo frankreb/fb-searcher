@@ -39,12 +39,13 @@ interface AiDecision {
 
 function runCodex(prompt: string, timeoutMs: number = 120_000): Promise<string> {
   return new Promise((resolve, reject) => {
-    const proc = execFile(
+    execFile(
       'codex',
       [
-        '--quiet',
-        '--full-stdout',
-        '--approval-mode', 'full-auto',
+        'exec',
+        '--full-auto',
+        '--skip-git-repo-check',
+        '-o', '/dev/stdout',
         prompt,
       ],
       { timeout: timeoutMs, maxBuffer: 1024 * 1024 * 10 },

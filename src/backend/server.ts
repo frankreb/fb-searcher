@@ -130,10 +130,16 @@ Output ONLY the prompt text, nothing else. No markdown, no quotes, no explanatio
 
       const { execFile } = await import('child_process');
       const output = await new Promise<string>((resolve, reject) => {
-        execFile('codex', ['--quiet', '--full-stdout', '--approval-mode', 'full-auto', codexPrompt],
-          { timeout: 60000, maxBuffer: 1024 * 1024 },
+        execFile('codex', [
+          'exec',
+          '--full-auto',
+          '--skip-git-repo-check',
+          '-o', '/dev/stdout',
+          codexPrompt,
+        ],
+          { timeout: 90000, maxBuffer: 1024 * 1024 },
           (error, stdout, stderr) => {
-            if (error) reject(new Error(`Codex failed: ${error.message}`));
+            if (error) reject(new Error(`Codex failed: ${error.message}\n${stderr}`));
             else resolve(stdout.trim());
           }
         );
