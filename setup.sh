@@ -328,6 +328,28 @@ sudo systemctl enable fb-searcher
 info "Systemd service created and enabled (auto-start on boot)."
 
 # -----------------------------------------------------------
+# 13. Make node/npm/codex available in current shell
+# -----------------------------------------------------------
+# Write a small env loader script that the user can source
+ENV_LOADER="$APP_DIR/.load-env.sh"
+cat > "$ENV_LOADER" << ENVEOF
+# Source this to load node/npm/codex into your current shell
+export NVM_DIR="\$HOME/.nvm"
+[ -s "\$NVM_DIR/nvm.sh" ] && . "\$NVM_DIR/nvm.sh"
+[ -s "\$NVM_DIR/bash_completion" ] && . "\$NVM_DIR/bash_completion"
+ENVEOF
+
+# Also create a global profile.d script so ALL new shells get node/npm automatically
+sudo tee /etc/profile.d/nvm-global.sh > /dev/null << 'PROFEOF'
+# Load nvm for all users (if installed in their home)
+if [ -d "$HOME/.nvm" ]; then
+  export NVM_DIR="$HOME/.nvm"
+  [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+fi
+PROFEOF
+sudo chmod +x /etc/profile.d/nvm-global.sh
+
+# -----------------------------------------------------------
 # Done!
 # -----------------------------------------------------------
 PI_IP=$(hostname -I | awk '{print $1}')
@@ -341,29 +363,38 @@ echo "  Everything is installed:"
 echo "    - Chromium: $CHROMIUM_BIN"
 echo "    - Node.js:  $(node -v)"
 echo "    - npm:      $(npm -v)"
-echo "    - Codex:    $(command -v codex 2>/dev/null || echo 'open a new terminal to use')"
+echo "    - Codex:    $(command -v codex 2>/dev/null || echo 'run: source ~/.bashrc')"
 echo "    - Project:  $APP_DIR"
+echo ""
+warn "To use node/npm/codex in THIS terminal, run:"
+echo ""
+echo "     source ~/.bashrc"
+echo ""
+echo "  (New terminals will work automatically.)"
 echo ""
 echo "  ┌─────────────────────────────────────────────┐"
 echo "  │  NEXT STEPS (you must do these manually):   │"
 echo "  └─────────────────────────────────────────────┘"
 echo ""
-echo "  1. Edit your config with Telegram credentials:"
+echo "  1. Load tools in this terminal:"
+echo "     source ~/.bashrc"
+echo ""
+echo "  2. Edit your config with Telegram credentials:"
 echo "     nano $APP_DIR/.env"
 echo ""
-echo "  2. Add your Facebook cookies:"
+echo "  3. Add your Facebook cookies:"
 echo "     nano $APP_DIR/cookies/cookies.json"
 echo ""
-echo "  3. (Optional) Set up Codex CLI for AI filtering:"
+echo "  4. (Optional) Set up Codex CLI for AI filtering:"
 echo "     codex"
 echo "     Then set AI_FILTER_ENABLED=true in .env"
 echo ""
-echo "  4. Start the service:"
+echo "  5. Start the service:"
 echo "     sudo systemctl start fb-searcher"
 echo ""
-echo "  5. Check logs:"
+echo "  6. Check logs:"
 echo "     journalctl -u fb-searcher -f"
 echo ""
-echo "  6. Open the dashboard:"
+echo "  7. Open the dashboard:"
 echo "     http://${PI_IP}:3000"
 echo ""
