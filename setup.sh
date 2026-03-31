@@ -118,6 +118,11 @@ fi
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 
+# Verify node and npm are available
+command -v node &>/dev/null || error "Node.js installation failed. Please install Node.js >= ${NODE_VERSION} manually."
+command -v npm &>/dev/null || error "npm not found. It should come with Node.js. Try: nvm install ${NODE_VERSION}"
+info "Using Node.js $(node -v) and npm $(npm -v)"
+
 # -----------------------------------------------------------
 # 3. Codex CLI
 # -----------------------------------------------------------
