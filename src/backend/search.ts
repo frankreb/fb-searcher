@@ -27,8 +27,16 @@ export interface MatchResult {
 export function matchItem(item: ScrapedItemRow, criteria: SearchCriteria): boolean {
   const text = buildSearchableText(item);
 
-  // All keywords must match (AND logic)
-  if (criteria.keywords.length > 0) {
+  // Source filter: groups searches only match group items, marketplace only marketplace
+  if (criteria.source === 'groups' && item.source !== 'facebook_group') return false;
+  if (criteria.source === 'marketplace' && item.source !== 'facebook_marketplace') return false;
+
+  // For groups searches: skip keyword matching — AI prompt is the primary filter.
+  // All group posts are collected and sent to Codex for filtering.
+  const isGroupsSearch = criteria.source === 'groups';
+
+  // All keywords must match (AND logic) — skipped for groups searches
+  if (!isGroupsSearch && criteria.keywords.length > 0) {
     const allMatch = criteria.keywords.every((kw) =>
       text.includes(kw.toLowerCase()),
     );
@@ -90,6 +98,11 @@ export function matchItem(item: ScrapedItemRow, criteria: SearchCriteria): boole
 export function scoreMatch(item: ScrapedItemRow, criteria: SearchCriteria): number {
   let score = 0;
   const text = buildSearchableText(item);
+
+  // Groups searches without keywords get a base score (AI will do the real filtering)
+  if (criteria.source === 'groups' && criteria.keywords.length === 0) {
+    score += 20;
+  }
 
   // Keyword frequency score (up to 40 points)
   if (criteria.keywords.length > 0) {

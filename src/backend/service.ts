@@ -10,7 +10,7 @@ import {
   ScrapedItemRow,
 } from './database';
 import { SearchCriteria, MatchResult, matchItemAgainstSearches } from './search';
-import { sendNotification, sendAiNotification } from '../bot/telegram';
+import { sendNotification, sendAiNotification, sendGroupsNothingFound } from '../bot/telegram';
 import { filterWithAi } from './ai-filter';
 import { AppConfig } from '../config/settings';
 import { createLogger } from './logger';
@@ -83,21 +83,58 @@ export async function processScrapedItems(items: RawScrapedItem[], config: AppCo
       const searchInfo = searchMap.get(searchId);
       const searchPrompt = searchInfo?.aiPrompt;
 
+      // Check if this is a groups search (AI is the primary filter)
+      const searchCriteria = searchInfo ? JSON.parse(
+        searchRows.find(r => r.id === searchId)!.criteria_json
+      ) as SearchCriteria : null;
+      const isGroupsSearch = searchCriteria?.source === 'groups';
+
       if (searchPrompt && config.aiFilter.enabled) {
         // This search has its own AI prompt — run Codex with it
         logger.info(`Running Codex for search "${searchInfo?.name}" on ${entries.length} items`);
         const approved = await filterWithAi(entries, { enabled: true, prompt: searchPrompt });
 
-        for (const entry of approved) {
-          await queueAiNotifications(entry.item, entry.matches, entry.aiSummary, config.telegram.chatId);
+        if (approved.length > 0) {
+          for (const entry of approved) {
+            await queueAiNotifications(entry.item, entry.matches, entry.aiSummary, config.telegram.chatId);
+          }
+        } else if (isGroupsSearch) {
+          // AI filtered everything out — send "nothing found" report
+          const groupNames = (searchCriteria?.groupUrls || []).map(
+            (u) => u.replace(/.*\/groups\//, '').replace(/\/$/, ''),
+          );
+          await sendGroupsNothingFound(
+            config.telegram.chatId,
+            searchInfo?.name || 'Unknown',
+            groupNames,
+            entries.length,
+          );
         }
       } else if (!searchPrompt && config.aiFilter.enabled && config.aiFilter.prompt) {
         // No per-search prompt but global AI filter is on — use global prompt
         logger.info(`Running Codex (global prompt) for search "${searchInfo?.name}" on ${entries.length} items`);
         const approved = await filterWithAi(entries, config.aiFilter);
 
-        for (const entry of approved) {
-          await queueAiNotifications(entry.item, entry.matches, entry.aiSummary, config.telegram.chatId);
+        if (approved.length > 0) {
+          for (const entry of approved) {
+            await queueAiNotifications(entry.item, entry.matches, entry.aiSummary, config.telegram.chatId);
+          }
+        } else if (isGroupsSearch) {
+          const groupNames = (searchCriteria?.groupUrls || []).map(
+            (u) => u.replace(/.*\/groups\//, '').replace(/\/$/, ''),
+          );
+          await sendGroupsNothingFound(
+            config.telegram.chatId,
+            searchInfo?.name || 'Unknown',
+            groupNames,
+            entries.length,
+          );
+        }
+      } else if (isGroupsSearch && !searchPrompt) {
+        // Groups search without AI prompt — warn, but still send items
+        logger.warn(`Groups search "${searchInfo?.name}" has no AI prompt. All ${entries.length} posts will be sent. Add an AI prompt to filter them.`);
+        for (const entry of entries) {
+          await queueNotifications(entry.item, entry.matches, config.telegram.chatId);
         }
       } else {
         // No AI filter — send directly
@@ -106,6 +143,32 @@ export async function processScrapedItems(items: RawScrapedItem[], config: AppCo
         }
       }
     }
+  }
+
+  // Check for groups searches that got zero posts at all
+  const allSearchRows = getActiveSearches();
+  for (const row of allSearchRows) {
+    const criteria = JSON.parse(row.criteria_json) as SearchCriteria;
+    if (criteria.source !== 'groups') continue;
+
+    // Check if this search had any entries in pendingNotifications
+    const hadEntries = pendingNotifications.some((entry) =>
+      entry.matches.some((m) => m.searchId === row.id),
+    );
+    if (hadEntries) continue;
+
+    // Check if any group items were scraped at all for this search's groups
+    const groupPostCount = items.filter((i) => i.source === 'facebook_group').length;
+    const groupNames = (criteria.groupUrls || []).map(
+      (u) => u.replace(/.*\/groups\//, '').replace(/\/$/, ''),
+    );
+
+    await sendGroupsNothingFound(
+      config.telegram.chatId,
+      row.name,
+      groupNames,
+      groupPostCount,
+    );
   }
 
   lastRunAt = new Date().toISOString();

@@ -156,18 +156,26 @@
         </div>
       </div>
 
-      <div class="form-row">
-        <div class="form-group">
-          <label>Keywords (comma-separated)</label>
-          <input type="text" id="search-keywords" placeholder="e.g. sim rig, wheelbase, cockpit">
+      <!-- Keywords (marketplace only) -->
+      <div id="fields-keywords">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Keywords (comma-separated)</label>
+            <input type="text" id="search-keywords" placeholder="e.g. sim rig, wheelbase, cockpit">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Exclude Keywords</label>
+            <input type="text" id="search-exclude" placeholder="e.g. broken, parts only">
+          </div>
         </div>
       </div>
 
-      <div class="form-row">
-        <div class="form-group">
-          <label>Exclude Keywords</label>
-          <input type="text" id="search-exclude" placeholder="e.g. broken, parts only">
-        </div>
+      <!-- Groups info banner -->
+      <div id="groups-info" style="display:none; background: #e7f3ff; border: 1px solid #b3d4fc; border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; font-size: 13px; color: #1a5276;">
+        <strong>How Groups search works:</strong> All recent posts from your groups are collected, then Codex AI reads every post to find people looking to buy. No keyword filtering — the AI prompt below tells Codex what kind of buyers you're looking for.
       </div>
 
       <!-- Groups-only fields -->
@@ -249,7 +257,7 @@
             <textarea id="search-ai-prompt" rows="6" placeholder="Click 'Generate with Codex' to create a prompt from your search criteria, or write your own."></textarea>
           </div>
         </div>
-        <p style="font-size: 11px; color: #999; margin-top: -4px;">
+        <p id="ai-prompt-hint" style="font-size: 11px; color: #999; margin-top: -4px;">
           This prompt tells Codex how to filter scraped results before sending them to Telegram. Leave empty to send all matches without AI filtering.
         </p>
       </div>
@@ -312,6 +320,8 @@
         submitBtn.className = 'btn btn-groups';
         groupsFields.style.display = 'block';
         marketFields.style.display = 'none';
+        document.getElementById('fields-keywords').style.display = 'none';
+        document.getElementById('groups-info').style.display = 'block';
       } else {
         title.textContent = 'New Marketplace Search';
         badge.textContent = 'MARKETPLACE';
@@ -320,6 +330,8 @@
         submitBtn.className = 'btn btn-marketplace';
         groupsFields.style.display = 'none';
         marketFields.style.display = 'block';
+        document.getElementById('fields-keywords').style.display = 'block';
+        document.getElementById('groups-info').style.display = 'none';
       }
 
       document.getElementById('modal-overlay').classList.add('active');
@@ -346,6 +358,8 @@
         submitBtn.className = 'btn btn-groups';
         groupsFields.style.display = 'block';
         marketFields.style.display = 'none';
+        document.getElementById('fields-keywords').style.display = 'none';
+        document.getElementById('groups-info').style.display = 'block';
       } else {
         title.textContent = 'Edit Marketplace Search';
         badge.textContent = 'MARKETPLACE';
@@ -353,6 +367,8 @@
         submitBtn.className = 'btn btn-marketplace';
         groupsFields.style.display = 'none';
         marketFields.style.display = 'block';
+        document.getElementById('fields-keywords').style.display = 'block';
+        document.getElementById('groups-info').style.display = 'none';
       }
       submitBtn.textContent = 'Save Changes';
 
@@ -465,9 +481,14 @@
 
       const aiPrompt = document.getElementById('search-ai-prompt').value.trim();
 
+      // For groups: warn if no AI prompt (it's the primary filter)
+      if (source === 'groups' && !aiPrompt) {
+        if (!confirm('No AI prompt set. ALL group posts will be sent to Telegram without filtering. Continue?')) return;
+      }
+
       const criteria = {
         source: source,
-        keywords: keywords,
+        keywords: source === 'groups' ? [] : keywords,
         excludeKeywords: excludeKeywords,
         regexPatterns: [],
         maxAgeDays: maxAgeDays,
@@ -581,7 +602,7 @@
 
           // Keywords / Groups column
           let kwCol = '';
-          if (source === 'groups' || source === 'both') {
+          if (source === 'groups') {
             const urls = (c.groupUrls || []);
             if (urls.length > 0) {
               kwCol += urls.map(u => {
@@ -589,8 +610,12 @@
                 return '<span class="tag" title="' + esc(u) + '">' + esc(name) + '</span>';
               }).join('');
             }
-          }
-          if (source === 'marketplace' || source === 'both') {
+            if (c.aiPrompt) {
+              kwCol += ' <span style="color:#7c4dff;font-size:11px;font-weight:600;">AI filtered</span>';
+            } else {
+              kwCol += ' <span style="color:#e65100;font-size:11px;">no filter</span>';
+            }
+          } else if (source === 'marketplace') {
             const kw = (c.keywords || []);
             if (kw.length > 0) {
               kwCol += kw.map(k => '<span class="tag">' + esc(k) + '</span>').join('');

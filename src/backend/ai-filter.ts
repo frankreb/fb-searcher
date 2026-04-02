@@ -28,6 +28,7 @@ interface ItemForAi {
   category: string | null;
   condition: string | null;
   url: string | null;
+  author: string | null;
   matchedSearches: string[];
 }
 
@@ -89,6 +90,7 @@ export async function filterWithAi(
     category: entry.item.category,
     condition: entry.item.condition,
     url: entry.item.url,
+    author: entry.item.author,
     matchedSearches: entry.matches.map((m) => m.searchName),
   }));
 
@@ -98,7 +100,20 @@ export async function filterWithAi(
   const tmpFile = path.join(tmpDir, `ai-filter-input-${Date.now()}.json`);
   writeFileSync(tmpFile, JSON.stringify(itemsForAi, null, 2));
 
-  const prompt = `Read the file "${tmpFile}" which contains a JSON array of Facebook Marketplace listings and group posts that matched my search criteria.
+  // Detect if these are group posts (buyer detection) or marketplace listings
+  const isGroupPosts = items.length > 0 && items[0].item.source === 'facebook_group';
+
+  const contextLine = isGroupPosts
+    ? 'These are Facebook group posts from buy/sell groups. I am a SELLER — I want to find posts from people who are LOOKING TO BUY (WTB, ISO, "looking for", "anyone selling", "need", "want to buy"). Skip posts from other sellers listing items for sale, spam, memes, admin announcements, and off-topic chatter.'
+    : 'These are Facebook Marketplace listings that matched my search criteria.';
+
+  const summaryHint = isGroupPosts
+    ? 'For buyer posts: summarize what the person wants to buy. For skipped posts: briefly say why (seller post, spam, off-topic, etc.).'
+    : 'The "summary" should be 1-2 sentences explaining why it is relevant or why it was skipped.';
+
+  const prompt = `Read the file "${tmpFile}" which contains a JSON array of posts/listings.
+
+${contextLine}
 
 My filtering instructions:
 ${config.prompt}
@@ -106,9 +121,9 @@ ${config.prompt}
 For each item in the JSON array, decide if it should be sent to me or skipped based on my instructions above.
 
 Output ONLY a valid JSON array (no markdown, no code blocks, no explanation) with this format:
-[{"index": 0, "send": true, "summary": "Good deal on leather couch, well under budget"}, {"index": 1, "send": false, "summary": "Looks like spam, no real listing"}]
+[{"index": 0, "send": true, "summary": "Person looking to buy a sim rig, budget $500"}, {"index": 1, "send": false, "summary": "Seller listing their own item, not a buyer"}]
 
-Every item must have a decision. Use the "index" field from the input. The "summary" should be 1-2 sentences explaining why it's relevant or why it was skipped.`;
+Every item must have a decision. Use the "index" field from the input. ${summaryHint}`;
 
   try {
     logger.info(`Running Codex CLI to filter ${items.length} matched items`);

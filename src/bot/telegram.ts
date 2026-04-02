@@ -213,7 +213,7 @@ export async function sendNotification(
     '',
     escapeV2(description),
     '',
-    item.url ? `[View on Facebook](${item.url})` : '',
+    item.url ? `🔗 [Open post on Facebook](${escapeUrl(item.url)})` : '',
     `_${escapeV2(new Date().toLocaleString())}_`,
   ].filter(Boolean).join('\n');
 
@@ -252,7 +252,7 @@ export async function sendAiNotification(
     '',
     aiSummary ? `🤖 *AI:* ${escapeV2(aiSummary)}` : '',
     '',
-    item.url ? `[View on Facebook](${item.url})` : '',
+    item.url ? `🔗 [Open post on Facebook](${escapeUrl(item.url)})` : '',
     `_${escapeV2(new Date().toLocaleString())}_`,
   ].filter(Boolean).join('\n');
 
@@ -262,6 +262,34 @@ export async function sendAiNotification(
   });
   recordSend();
   return sent.message_id;
+}
+
+export async function sendGroupsNothingFound(
+  chatId: string,
+  searchName: string,
+  groupNames: string[],
+  totalPosts: number,
+): Promise<void> {
+  if (!bot) throw new Error('Bot not initialized. Call startBot() first.');
+  await waitForRateLimit();
+
+  const groupList = groupNames.map((g) => escapeV2(g)).join(', ');
+  const time = escapeV2(new Date().toLocaleString());
+
+  const message = [
+    `📭 *${escapeV2(searchName)}*`,
+    '',
+    `Searched across *${totalPosts}* posts in groups: ${groupList}`,
+    '',
+    'Nothing relevant found this time\\.',
+    '',
+    `_${time}_`,
+  ].join('\n');
+
+  await bot.telegram.sendMessage(chatId, message, {
+    parse_mode: 'MarkdownV2',
+  });
+  recordSend();
 }
 
 export async function sendAlert(chatId: string, alertMessage: string): Promise<void> {
@@ -278,6 +306,10 @@ export async function sendAlert(chatId: string, alertMessage: string): Promise<v
 
 function escapeV2(text: string): string {
   return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
+}
+
+function escapeUrl(url: string): string {
+  return url.replace(/([)\\])/g, '\\$1');
 }
 
 function formatAgo(iso: string): string {

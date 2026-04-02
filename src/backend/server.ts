@@ -104,7 +104,11 @@ export function startServer(port: number): void {
 
       // Build a description of the search for Codex
       const parts: string[] = [];
-      parts.push(`I have a Facebook ${source === 'groups' ? 'Groups' : 'Marketplace'} scraper.`);
+      if (source === 'groups') {
+        parts.push('I monitor Facebook buy/sell groups. I am a SELLER — I want to find people who are LOOKING TO BUY things I can sell them.');
+      } else {
+        parts.push('I have a Facebook Marketplace scraper.');
+      }
       if (name) parts.push(`Search name: "${name}".`);
       if (keywords?.length) parts.push(`Keywords: ${keywords.join(', ')}.`);
       if (excludeKeywords?.length) parts.push(`Exclude: ${excludeKeywords.join(', ')}.`);
@@ -115,7 +119,26 @@ export function startServer(port: number): void {
       if (condition) parts.push(`Condition: ${condition}.`);
       if (userInput) parts.push(`Additional context from user: ${userInput}`);
 
-      const codexPrompt = `I need you to write a filtering prompt for an AI that reviews Facebook ${source === 'groups' ? 'group posts' : 'Marketplace listings'} and decides which ones to forward to me via Telegram.
+      let codexPrompt: string;
+
+      if (source === 'groups') {
+        codexPrompt = `I need you to write a filtering prompt for an AI that reviews Facebook group posts and decides which ones to forward to me via Telegram.
+
+IMPORTANT CONTEXT: I am a SELLER. I want to find posts from people who are LOOKING TO BUY — "WTB", "looking for", "ISO", "anyone selling", "need", "want to buy", "in search of", etc. I do NOT want posts from other sellers listing items for sale.
+
+Here is my search context:
+${parts.join('\n')}
+
+Write a clear, specific filtering prompt (about 5-10 lines) that tells the AI:
+1. I am looking for BUYER posts — people wanting to buy things I sell (be specific based on the context above)
+2. Skip posts from other sellers listing their items for sale — I only want demand/buyer posts
+3. Skip spam, memes, off-topic discussions, admin posts, and irrelevant chatter
+4. What makes a buyer post worth sending to me (relevant to what I sell)
+5. Any special rules based on the search criteria
+
+Output ONLY the prompt text, nothing else. No markdown, no quotes, no explanation. Just the raw prompt I'll give to the AI.`;
+      } else {
+        codexPrompt = `I need you to write a filtering prompt for an AI that reviews Facebook Marketplace listings and decides which ones to forward to me via Telegram.
 
 Here is my search context:
 ${parts.join('\n')}
@@ -127,6 +150,7 @@ Write a clear, specific filtering prompt (about 5-10 lines) that tells the AI:
 4. Any special rules based on the search criteria
 
 Output ONLY the prompt text, nothing else. No markdown, no quotes, no explanation. Just the raw prompt I'll give to the AI.`;
+      }
 
       const { spawn } = await import('child_process');
       const fs = await import('fs');
@@ -203,15 +227,25 @@ Output ONLY the prompt text, nothing else. No markdown, no quotes, no explanatio
       // Fallback: generate a basic prompt without Codex
       const { source, name, keywords, excludeKeywords, location, priceMin, priceMax } = req.body;
       const lines: string[] = [];
-      lines.push(`Review the following Facebook ${source === 'groups' ? 'group posts' : 'Marketplace listings'} and decide which ones I should see.`);
-      if (name) lines.push(`This search is about: ${name}.`);
-      if (keywords?.length) lines.push(`I am looking for: ${keywords.join(', ')}.`);
-      if (excludeKeywords?.length) lines.push(`Skip anything mentioning: ${excludeKeywords.join(', ')}.`);
-      if (location) lines.push(`Preferred location: ${location}.`);
-      if (priceMin || priceMax) lines.push(`Price range: $${priceMin || 0} - $${priceMax || 'any'}.`);
-      lines.push('');
-      lines.push('Only send me genuinely relevant items. Skip spam, scams, and overpriced listings.');
-      lines.push('For each approved item, write a short summary of why it is worth my attention.');
+      if (source === 'groups') {
+        lines.push('Review the following Facebook group posts. I am a SELLER — find posts from people who want to BUY.');
+        if (name) lines.push(`This search is about: ${name}.`);
+        if (excludeKeywords?.length) lines.push(`Skip anything mentioning: ${excludeKeywords.join(', ')}.`);
+        lines.push('');
+        lines.push('Only send me posts where someone is LOOKING TO BUY (WTB, ISO, "looking for", "anyone selling", "need", etc.).');
+        lines.push('Skip posts from other sellers listing items for sale, spam, memes, admin posts, and off-topic chatter.');
+        lines.push('For each approved post, summarize what the person wants to buy.');
+      } else {
+        lines.push('Review the following Facebook Marketplace listings and decide which ones I should see.');
+        if (name) lines.push(`This search is about: ${name}.`);
+        if (keywords?.length) lines.push(`I am looking for: ${keywords.join(', ')}.`);
+        if (excludeKeywords?.length) lines.push(`Skip anything mentioning: ${excludeKeywords.join(', ')}.`);
+        if (location) lines.push(`Preferred location: ${location}.`);
+        if (priceMin || priceMax) lines.push(`Price range: $${priceMin || 0} - $${priceMax || 'any'}.`);
+        lines.push('');
+        lines.push('Only send me genuinely relevant items. Skip spam, scams, and overpriced listings.');
+        lines.push('For each approved item, write a short summary of why it is worth my attention.');
+      }
 
       res.json({ prompt: lines.join('\n'), fallback: true, error: String(err) });
     }
